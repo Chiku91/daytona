@@ -19,6 +19,7 @@ import (
 	"github.com/daytonaio/daytona/pkg/server/profiledata"
 	"github.com/daytonaio/daytona/pkg/server/providertargets"
 	"github.com/daytonaio/daytona/pkg/server/workspaces"
+	"github.com/daytonaio/daytona/pkg/telemetry"
 	"github.com/hashicorp/go-plugin"
 
 	log "github.com/sirupsen/logrus"
@@ -34,6 +35,7 @@ type ServerInstanceConfig struct {
 	GitProviderService       gitproviders.IGitProviderService
 	ProviderManager          manager.IProviderManager
 	ProfileDataService       profiledata.IProfileDataService
+	TelemetryService         telemetry.TelemetryService
 }
 
 var server *Server
@@ -57,6 +59,7 @@ func GetInstance(serverConfig *ServerInstanceConfig) *Server {
 			GitProviderService:       serverConfig.GitProviderService,
 			ProviderManager:          serverConfig.ProviderManager,
 			ProfileDataService:       serverConfig.ProfileDataService,
+			TelemetryService:         serverConfig.TelemetryService,
 		}
 	}
 
@@ -73,6 +76,7 @@ type Server struct {
 	GitProviderService       gitproviders.IGitProviderService
 	ProviderManager          manager.IProviderManager
 	ProfileDataService       profiledata.IProfileDataService
+	TelemetryService         telemetry.TelemetryService
 }
 
 func (s *Server) Start(errCh chan error) error {

@@ -11,9 +11,11 @@ import (
 	"net/url"
 
 	"github.com/daytonaio/daytona/cmd/daytona/config"
+	"github.com/daytonaio/daytona/internal"
 	"github.com/daytonaio/daytona/pkg/api"
 	"github.com/daytonaio/daytona/pkg/apiclient"
 	"github.com/daytonaio/daytona/pkg/server"
+	"github.com/daytonaio/daytona/pkg/telemetry"
 )
 
 var apiClient *apiclient.APIClient
@@ -60,6 +62,11 @@ func GetApiClient(profile *config.Profile) (*apiclient.APIClient, error) {
 	}
 
 	clientConfig.AddDefaultHeader("Authorization", fmt.Sprintf("Bearer %s", apiKey))
+
+	if c.TelemetryEnabled {
+		clientConfig.AddDefaultHeader(telemetry.ENABLED_HEADER, "true")
+		clientConfig.AddDefaultHeader(telemetry.SESSION_ID_HEADER, internal.SESSION_ID)
+	}
 
 	apiClient = apiclient.NewAPIClient(clientConfig)
 

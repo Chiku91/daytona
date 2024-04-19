@@ -11,6 +11,7 @@ import (
 	"github.com/daytonaio/daytona/pkg/apikey"
 	"github.com/daytonaio/daytona/pkg/provider"
 	"github.com/daytonaio/daytona/pkg/server/workspaces/dto"
+	"github.com/daytonaio/daytona/pkg/telemetry"
 	"github.com/daytonaio/daytona/pkg/workspace"
 )
 
@@ -87,7 +88,22 @@ func (s *WorkspaceService) CreateWorkspace(req dto.CreateWorkspaceRequest) (*wor
 		return nil, err
 	}
 
-	return s.createWorkspace(w)
+	target, err := s.targetStore.Find(w.Target)
+	if err != nil {
+		return w, err
+	}
+
+	w, err = s.createWorkspace(w, target)
+
+	telemetryProps := telemetry.NewWorkspaceEventProps(w, target)
+	event := telemetry.ServerEventWorkspaceCreated
+	if err != nil {
+		telemetryProps["error"] = err.Error()
+		event = telemetry.ServerEventWorkspaceCreateError
+	}
+	s.telemetryService.TrackServerEvent(event, w.Id, telemetryProps)
+
+	return w, err
 }
 
 func (s *WorkspaceService) createProject(project *workspace.Project, target *provider.ProviderTarget, logWriter io.Writer) error {
@@ -112,16 +128,11 @@ func (s *WorkspaceService) createProject(project *workspace.Project, target *pro
 	return nil
 }
 
-func (s *WorkspaceService) createWorkspace(workspace *workspace.Workspace) (*workspace.Workspace, error) {
-	target, err := s.targetStore.Find(workspace.Target)
-	if err != nil {
-		return workspace, err
-	}
-
+func (s *WorkspaceService) createWorkspace(workspace *workspace.Workspace, target *provider.ProviderTarget) (*workspace.Workspace, error) {
 	wsLogger := s.loggerFactory.CreateWorkspaceLogger(workspace.Id)
 	wsLogger.Write([]byte("Creating workspace\n"))
 
-	err = s.provisioner.CreateWorkspace(workspace, target)
+	err := s.provisioner.CreateWorkspace(workspace, target)
 	if err != nil {
 		return nil, err
 	}
