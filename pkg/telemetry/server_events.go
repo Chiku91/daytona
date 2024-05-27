@@ -6,6 +6,7 @@ package telemetry
 import (
 	"context"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/daytonaio/daytona/pkg/provider"
@@ -35,22 +36,19 @@ func NewWorkspaceEventProps(workspace *workspace.Workspace, target *provider.Pro
 	if workspace != nil {
 		props["workspace_n_projects"] = len(workspace.Projects)
 		publicRepos := []string{}
-		images := []string{}
+		publicImages := []string{}
 
 		for _, project := range workspace.Projects {
-			images = append(images, project.Image)
-			if project.Repository != nil {
-				ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
-				_, err := http.NewRequestWithContext(ctx, "HEAD", project.Repository.Url, nil)
-				cancel()
-				if err == nil {
-					publicRepos = append(publicRepos, project.Repository.Url)
-				}
+			if isImagePublic(project.Image) {
+				publicImages = append(publicImages, project.Image)
+			}
+			if project.Repository != nil && isPublic(project.Repository.Url) {
+				publicRepos = append(publicRepos, project.Repository.Url)
 			}
 		}
 
 		props["workspace_public_repos"] = publicRepos
-		props["workspace_images"] = images
+		props["workspace_public_images"] = publicImages
 	}
 
 	if target != nil {
@@ -60,4 +58,23 @@ func NewWorkspaceEventProps(workspace *workspace.Workspace, target *provider.Pro
 	}
 
 	return props
+}
+
+func isImagePublic(imageName string) bool {
+	if strings.Count(imageName, "/") < 2 {
+		if strings.Count(imageName, "/") == 0 {
+			return isPublic("https://hub.docker.com/_/" + imageName)
+		}
+
+		return isPublic("https://hub.docker.com/r/" + imageName)
+	}
+
+	return isPublic(imageName)
+}
+
+func isPublic(url string) bool {
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	_, err := http.NewRequestWithContext(ctx, "HEAD", url, nil)
+	cancel()
+	return err == nil
 }
