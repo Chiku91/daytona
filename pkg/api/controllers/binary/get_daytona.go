@@ -14,9 +14,13 @@ import (
 
 // Used in projects to download the Daytona binary
 func GetDaytonaScript(ctx *gin.Context) {
-	server := server.GetInstance(nil)
+	c, err := server.GetConfig()
+	if err != nil {
+		ctx.String(http.StatusInternalServerError, err.Error())
+		return
+	}
 
-	downloadUrl, _ := url.JoinPath(server.GetApiUrl(), "binary")
+	downloadUrl, _ := url.JoinPath(c.GetApiUrl(), "binary")
 	getServerScript := constants.GetDaytonaScript(downloadUrl)
 
 	ctx.String(http.StatusOK, getServerScript)

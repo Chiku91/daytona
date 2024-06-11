@@ -96,11 +96,18 @@ var ServeCmd = &cobra.Command{
 			log.Fatal(err)
 		}
 
+		var headscaleServerUrl string
+		if c.IpWithProtocol != nil {
+			headscaleServerUrl = fmt.Sprintf("%s:%d", *c.IpWithProtocol, c.HeadscalePort)
+			headscaleServerUrl = strings.Replace(headscaleServerUrl, "http://", "https://", 1)
+		} else if c.Frps != nil {
+			headscaleServerUrl = fmt.Sprintf("https://%s.%s", c.Id, c.Frps.Domain)
+		}
+
 		headscaleServer := headscale.NewHeadscaleServer(&headscale.HeadscaleServerConfig{
-			ServerId:      c.Id,
-			FrpsDomain:    c.Frps.Domain,
-			FrpsProtocol:  c.Frps.Protocol,
-			HeadscalePort: c.HeadscalePort,
+			ServerId:  c.Id,
+			ServerUrl: headscaleServerUrl,
+			Port:      c.HeadscalePort,
 		})
 		err = headscaleServer.Init()
 		if err != nil {
@@ -139,9 +146,9 @@ var ServeCmd = &cobra.Command{
 		providerManager := manager.NewProviderManager(manager.ProviderManagerConfig{
 			LogsDir:               logsDir,
 			ProviderTargetService: providerTargetService,
-			ServerApiUrl:          util.GetFrpcApiUrl(c.Frps.Protocol, c.Id, c.Frps.Domain),
+			ServerApiUrl:          c.GetApiUrl(),
 			ServerDownloadUrl:     getDaytonaScriptUrl(c),
-			ServerUrl:             util.GetFrpcServerUrl(c.Frps.Protocol, c.Id, c.Frps.Domain),
+			ServerUrl:             headscaleServerUrl,
 			RegistryUrl:           c.RegistryUrl,
 			BaseDir:               c.ProvidersDir,
 			CreateProviderNetworkKey: func(providerName string) (string, error) {
@@ -180,8 +187,8 @@ var ServeCmd = &cobra.Command{
 			ApiKeyService:                   apiKeyService,
 			GitProviderService:              gitProviderService,
 			ContainerRegistryService:        containerRegistryService,
-			ServerApiUrl:                    util.GetFrpcApiUrl(c.Frps.Protocol, c.Id, c.Frps.Domain),
-			ServerUrl:                       util.GetFrpcServerUrl(c.Frps.Protocol, c.Id, c.Frps.Domain),
+			ServerApiUrl:                    c.GetApiUrl(),
+			ServerUrl:                       headscaleServerUrl,
 			DefaultProjectImage:             c.DefaultProjectImage,
 			DefaultProjectUser:              c.DefaultProjectUser,
 			DefaultProjectPostStartCommands: c.DefaultProjectPostStartCommands,
@@ -263,12 +270,12 @@ func waitForServerToStart(apiServer *api.ApiServer) error {
 }
 
 func getDaytonaScriptUrl(config *server.Config) string {
-	url, _ := url.JoinPath(util.GetFrpcApiUrl(config.Frps.Protocol, config.Id, config.Frps.Domain), "binary", "script")
+	url, _ := url.JoinPath(config.GetApiUrl(), "binary", "script")
 	return url
 }
 
 func printServerStartedMessage(c *server.Config, runAsDaemon bool) {
-	started_view.Render(c.ApiPort, util.GetFrpcApiUrl(c.Frps.Protocol, c.Id, c.Frps.Domain), runAsDaemon)
+	started_view.Render(c.ApiPort, c.GetApiUrl(), runAsDaemon)
 }
 
 func getDbPath() (string, error) {

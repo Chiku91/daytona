@@ -1301,6 +1301,7 @@ components:
         apiPort: 0
         headscalePort: 1
         buildImageNamespace: buildImageNamespace
+        ipWithProtocol: ipWithProtocol
         serverDownloadUrl: serverDownloadUrl
         binariesPath: binariesPath
         logFilePath: logFilePath
@@ -1335,6 +1336,8 @@ components:
         headscalePort:
           type: integer
         id:
+          type: string
+        ipWithProtocol:
           type: string
         localBuilderRegistryPort:
           type: integer
