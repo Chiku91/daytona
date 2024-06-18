@@ -46,7 +46,7 @@ func (s *DockerClientTestSuite) TestCreateProject() {
 
 	s.mockClient.On("ImagePull", mock.Anything, project1.Image, mock.Anything).Return(t_docker.NewPipeReader(""), nil)
 
-	s.mockClient.On("ContainerCreate", mock.Anything, docker.GetContainerCreateConfig(project1, "download-url"),
+	s.mockClient.On("ContainerCreate", mock.Anything, docker.GetContainerCreateConfig(project1),
 		&container.HostConfig{
 			Privileged:  true,
 			NetworkMode: container.NetworkMode(project1.WorkspaceId),

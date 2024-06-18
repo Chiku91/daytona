@@ -101,6 +101,9 @@ func (s *WorkspaceService) CreateWorkspace(req dto.CreateWorkspaceRequest) (*wor
 }
 
 func (s *WorkspaceService) createBuild(project *workspace.Project, gc *gitprovider.GitProviderConfig, logWriter io.Writer) (*workspace.Project, error) {
+	// FIXME: skip build completely for now
+	return project, nil
+
 	if project.Build != nil {
 		lastBuildResult, err := s.builderFactory.CheckExistingBuild(*project)
 		if err != nil {

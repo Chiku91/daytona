@@ -5,13 +5,14 @@ package docker
 
 import (
 	"context"
+	"io"
 	"time"
 
 	"github.com/daytonaio/daytona/pkg/workspace"
 	"github.com/docker/docker/api/types/container"
 )
 
-func (d *DockerClient) StopProject(project *workspace.Project) error {
+func (d *DockerClient) StopProject(project *workspace.Project, logWriter io.Writer) error {
 	return d.stopProjectContainer(project)
 }
 

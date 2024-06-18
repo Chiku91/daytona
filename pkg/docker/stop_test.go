@@ -22,6 +22,6 @@ func (s *DockerClientTestSuite) TestStopProject() {
 		},
 	}, nil)
 
-	err := s.dockerClient.StopProject(project1)
+	err := s.dockerClient.StopProject(project1, nil)
 	require.Nil(s.T(), err)
 }

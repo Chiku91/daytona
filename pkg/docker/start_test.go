@@ -29,6 +29,6 @@ func (s *DockerClientTestSuite) TestStartProject() {
 		},
 	}, nil)
 
-	err := s.dockerClient.StartProject(project1)
+	err := s.dockerClient.StartProject(project1, "", nil)
 	require.Nil(s.T(), err)
 }
