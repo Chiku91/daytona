@@ -20,6 +20,7 @@ import (
 	ssh_config "github.com/daytonaio/daytona/pkg/agent/ssh/config"
 	"github.com/daytonaio/daytona/pkg/apiclient"
 	workspace_util "github.com/daytonaio/daytona/pkg/cmd/workspace/util"
+	"github.com/daytonaio/daytona/pkg/server"
 	"github.com/daytonaio/daytona/pkg/views"
 	"github.com/daytonaio/daytona/pkg/views/target"
 	"github.com/daytonaio/daytona/pkg/views/workspace/info"
@@ -32,6 +33,14 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/daytonaio/daytona/cmd/daytona/config"
+)
+
+type BuilderChoice string
+
+const (
+	AUTOMATIC    BuilderChoice = "Automatic"
+	DEVCONTAINER BuilderChoice = "Devcontainer"
+	NONE         BuilderChoice = "None"
 )
 
 var CreateCmd = &cobra.Command{
@@ -114,7 +123,7 @@ var CreateCmd = &cobra.Command{
 			visited[*projects[i].Source.Repository.Url] = true
 			projects[i].EnvVars = getEnvVariables(&projects[i], profileData)
 
-			if builderFlag == "Devcontainer" || devcontainerPathFlag != "" {
+			if builderFlag == string(DEVCONTAINER) || devcontainerPathFlag != "" {
 				projects[i].Build = &apiclient.ProjectBuild{
 					Devcontainer: &apiclient.ProjectBuildDevcontainer{},
 				}
@@ -123,15 +132,24 @@ var CreateCmd = &cobra.Command{
 				}
 			}
 
-			if builderFlag == "Automatic" {
-				projects[i].Build = &apiclient.ProjectBuild{}
-			}
+			if builderFlag == string(AUTOMATIC) || builderFlag == string(NONE) {
+				config, err := server.GetConfig()
+				if err != nil {
+					log.Fatal("Can't obtain server configuration.")
+				}
 
-			if builderFlag == "None" {
-				projects[i].Build = nil
+				projects[i].Image = &config.DefaultProjectImage
+				projects[i].User = &config.DefaultProjectUser
+
+				if builderFlag == string(AUTOMATIC) {
+					projects[i].Build = &apiclient.ProjectBuild{}
+				} else {
+					projects[i].Build = nil
+				}
 			}
 
 			if customImageFlag != "" || customImageUserFlag != "" {
+				projects[i].Build = nil
 				projects[i].Image = &customImageFlag
 				projects[i].User = &customImageUserFlag
 			}
@@ -250,16 +268,16 @@ func validateFlags() error {
 		return errors.New("Can't declare devcontainer file path with custom image and user flags. Choose either.")
 	}
 
-	if builderFlag != "" && builderFlag != "Automatic" && builderFlag != "Devcontainer" && builderFlag != "None" {
+	if builderFlag != "" && builderFlag != string(AUTOMATIC) && builderFlag != string(DEVCONTAINER) && builderFlag != string(NONE) {
 		return errors.New("Can't specify unsupported builder type! Please specify one of the following: Automatic/Devcontainer/None.")
 	}
 
-	if builderFlag != "" && builderFlag != "Devcontainer" && devcontainerPathFlag != "" {
+	if builderFlag != "" && builderFlag != string(DEVCONTAINER) && devcontainerPathFlag != "" {
 		return errors.New("Can't set devcontainer file path if builder is not set to Devcontainer.")
 	}
 
-	if builderFlag == "Devcontainer" && (customImageFlag != "" || customImageUserFlag != "") {
-		return errors.New("Can't choose Devcontainer as builder type and set custom image and user for it.")
+	if builderFlag != "" && (customImageFlag != "" || customImageUserFlag != "") {
+		return errors.New("Can't choose a builder type and set custom image and user for it.")
 	}
 
 	if (customImageFlag != "" && customImageUserFlag == "") || (customImageFlag == "" && customImageUserFlag != "") {
