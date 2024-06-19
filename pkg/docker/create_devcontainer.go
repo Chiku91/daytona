@@ -24,7 +24,7 @@ import (
 const dockerSockForwardContainer = "daytona-sock-forward"
 
 func (d *DockerClient) createProjectFromDevcontainer(project *workspace.Project, projectDir string, logWriter io.Writer) error {
-	socketForwardId, err := d.ensureDockerSockForward()
+	socketForwardId, err := d.ensureDockerSockForward(logWriter)
 	if err != nil {
 		return err
 	}
@@ -142,7 +142,7 @@ func (d *DockerClient) createProjectFromDevcontainer(project *workspace.Project,
 	return nil
 }
 
-func (d *DockerClient) ensureDockerSockForward() (string, error) {
+func (d *DockerClient) ensureDockerSockForward(logWriter io.Writer) (string, error) {
 	ctx := context.Background()
 
 	containers, err := d.apiClient.ContainerList(ctx, container.ListOptions{})
@@ -154,6 +154,12 @@ func (d *DockerClient) ensureDockerSockForward() (string, error) {
 		if container.Names[0] == "/"+dockerSockForwardContainer {
 			return container.ID, nil
 		}
+	}
+
+	// TODO: This image should be configurable because it might be hosted on an alternative registry
+	err = d.PullImage("alpine/socat", nil, logWriter)
+	if err != nil {
+		return "", err
 	}
 
 	c, err := d.apiClient.ContainerCreate(ctx, &container.Config{
