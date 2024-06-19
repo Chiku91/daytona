@@ -5,6 +5,7 @@ package docker
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/daytonaio/daytona/pkg/workspace"
 	"github.com/docker/docker/api/types"
@@ -39,7 +40,15 @@ func (d *DockerClient) DestroyProject(project *workspace.Project) error {
 func (d *DockerClient) removeProjectContainer(project *workspace.Project) error {
 	ctx := context.Background()
 
-	err := d.apiClient.ContainerRemove(ctx, d.GetProjectContainerName(project), container.RemoveOptions{
+	c, err := d.apiClient.ContainerInspect(ctx, d.GetProjectContainerName(project))
+	if err != nil {
+		if client.IsErrNotFound(err) {
+			return nil
+		}
+		return err
+	}
+
+	err = d.apiClient.ContainerRemove(ctx, d.GetProjectContainerName(project), container.RemoveOptions{
 		Force:         true,
 		RemoveVolumes: true,
 	})
@@ -49,6 +58,31 @@ func (d *DockerClient) removeProjectContainer(project *workspace.Project) error 
 
 	err = d.apiClient.VolumeRemove(ctx, d.GetProjectVolumeName(project), true)
 	if err != nil && !client.IsErrNotFound(err) {
+		return err
+	}
+
+	// TODO: Add logging
+	projectLabel, composeContainers, err := d.getComposeContainers(c)
+	if err != nil {
+		return err
+	}
+
+	if composeContainers == nil {
+		return nil
+	}
+
+	for _, c := range composeContainers {
+		err = d.apiClient.ContainerRemove(ctx, c.ID, container.RemoveOptions{
+			Force:         true,
+			RemoveVolumes: true,
+		})
+		if err != nil {
+			return err
+		}
+	}
+
+	err = d.apiClient.NetworkRemove(ctx, fmt.Sprintf("%s_default", projectLabel))
+	if err != nil {
 		return err
 	}
 

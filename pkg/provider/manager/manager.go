@@ -247,10 +247,16 @@ func (m *ProviderManager) initializeProvider(pluginPath string) (*pluginRef, err
 		return nil, errors.New("failed to create network key: " + err.Error())
 	}
 
+	daytonaPath, err := os.Executable()
+	if err != nil {
+		return nil, errors.New("failed to get daytona path: " + err.Error())
+	}
+
 	_, err = (*p).Initialize(InitializeProviderRequest{
 		BasePath:           pluginBasePath,
 		DaytonaDownloadUrl: m.daytonaDownloadUrl,
 		DaytonaVersion:     internal.Version,
+		DaytonaPath:        daytonaPath,
 		ServerUrl:          m.serverUrl,
 		ApiUrl:             m.apiUrl,
 		LogsDir:            m.logsDir,

@@ -4,49 +4,32 @@
 package docker
 
 import (
-	"context"
 	"errors"
 	"io"
 	"time"
 
+	"github.com/daytonaio/daytona/pkg/builder/devcontainer"
 	"github.com/daytonaio/daytona/pkg/provider/util"
 	"github.com/daytonaio/daytona/pkg/workspace"
 	"github.com/docker/docker/api/types"
-	"github.com/docker/docker/api/types/container"
 )
 
-func (d *DockerClient) StartProject(project *workspace.Project, daytonaDownloadUrl string, logWriter io.Writer) error {
-	return d.startProjectContainer(project, daytonaDownloadUrl, logWriter)
-}
+func (d *DockerClient) StartProject(project *workspace.Project, projectDir, daytonaDownloadUrl string, logWriter io.Writer) error {
+	var err error
+	if project.Build != nil && project.Build.Devcontainer != nil {
+		err = d.startDevcontainerProject(project, projectDir, logWriter)
+	} else if devcontainerFilePath, pathError := devcontainer.FindDevcontainerConfigFilePath(projectDir); pathError == nil {
+		project.Build.Devcontainer = &workspace.ProjectBuildDevcontainer{
+			DevContainerFilePath: devcontainerFilePath,
+		}
 
-func (d *DockerClient) startProjectContainer(project *workspace.Project, daytonaDownloadUrl string, logWriter io.Writer) error {
-	containerName := d.GetProjectContainerName(project)
-	ctx := context.Background()
-
-	inspect, err := d.apiClient.ContainerInspect(ctx, containerName)
-
-	if err == nil && inspect.State.Running {
-		return d.startDaytonaAgent(project, daytonaDownloadUrl, logWriter)
+		err = d.startDevcontainerProject(project, projectDir, logWriter)
+	} else {
+		err = d.startImageProject(project, daytonaDownloadUrl, logWriter)
 	}
 
-	err = d.apiClient.ContainerStart(ctx, containerName, container.StartOptions{})
 	if err != nil {
 		return err
-	}
-
-	// make sure container is running
-	//	TODO: timeout
-	for {
-		inspect, err := d.apiClient.ContainerInspect(ctx, containerName)
-		if err != nil {
-			return err
-		}
-
-		if inspect.State.Running {
-			break
-		}
-
-		time.Sleep(1 * time.Second)
 	}
 
 	return d.startDaytonaAgent(project, daytonaDownloadUrl, logWriter)

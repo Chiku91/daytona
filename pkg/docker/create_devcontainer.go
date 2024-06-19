@@ -14,6 +14,7 @@ import (
 
 	"github.com/daytonaio/daytona/pkg/workspace"
 	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/api/types/mount"
 	"github.com/google/uuid"
 	"github.com/tailscale/hujson"
@@ -23,7 +24,7 @@ import (
 
 const dockerSockForwardContainer = "daytona-sock-forward"
 
-func (d *DockerClient) createProjectFromDevcontainer(project *workspace.Project, projectDir string, logWriter io.Writer) error {
+func (d *DockerClient) createProjectFromDevcontainer(project *workspace.Project, projectDir string, logWriter io.Writer, prebuild bool) error {
 	socketForwardId, err := d.ensureDockerSockForward(logWriter)
 	if err != nil {
 		return err
@@ -80,7 +81,12 @@ func (d *DockerClient) createProjectFromDevcontainer(project *workspace.Project,
 		return err
 	}
 
-	cmd := []string{"-c", fmt.Sprintf("echo '%s' > /tmp/daytona-devcontainer.json && devcontainer up --workspace-folder=%s %s--override-config=/tmp/daytona-devcontainer.json --id-label=daytona.workspace.id=%s --id-label=daytona.project.name=%s --remove-existing-container", configString, projectDir, configFilePath, project.WorkspaceId, project.Name)}
+	prebuildFlag := ""
+	if prebuild {
+		prebuildFlag = " --prebuild"
+	}
+
+	cmd := []string{"-c", fmt.Sprintf("echo '%s' > /tmp/daytona-devcontainer.json && devcontainer up --workspace-folder=%s %s--override-config=/tmp/daytona-devcontainer.json --id-label=daytona.workspace.id=%s --id-label=daytona.project.name=%s%s", configString, projectDir, configFilePath, project.WorkspaceId, project.Name, prebuildFlag)}
 
 	c, err := d.apiClient.ContainerCreate(ctx, &container.Config{
 		Image:        "daytonaio/workspace-project",
@@ -145,15 +151,19 @@ func (d *DockerClient) createProjectFromDevcontainer(project *workspace.Project,
 func (d *DockerClient) ensureDockerSockForward(logWriter io.Writer) (string, error) {
 	ctx := context.Background()
 
-	containers, err := d.apiClient.ContainerList(ctx, container.ListOptions{})
+	containers, err := d.apiClient.ContainerList(ctx, container.ListOptions{
+		Filters: filters.NewArgs(filters.Arg("name", dockerSockForwardContainer)),
+	})
 	if err != nil {
 		return "", err
 	}
 
-	for _, container := range containers {
-		if container.Names[0] == "/"+dockerSockForwardContainer {
-			return container.ID, nil
-		}
+	if len(containers) > 1 {
+		return "", fmt.Errorf("multiple containers with name %s found", dockerSockForwardContainer)
+	}
+
+	if len(containers) == 1 {
+		return containers[0].ID, nil
 	}
 
 	// TODO: This image should be configurable because it might be hosted on an alternative registry

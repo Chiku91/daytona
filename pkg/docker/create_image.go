@@ -27,8 +27,7 @@ func (d *DockerClient) initProjectContainer(project *workspace.Project, projectD
 	ctx := context.Background()
 
 	_, err := d.apiClient.ContainerCreate(ctx, GetContainerCreateConfig(project), &container.HostConfig{
-		Privileged:  true,
-		NetworkMode: container.NetworkMode(project.WorkspaceId),
+		Privileged: true,
 		Mounts: []mount.Mount{
 			{
 				Type:   mount.TypeBind,

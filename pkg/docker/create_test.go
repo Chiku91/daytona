@@ -66,6 +66,6 @@ func (s *DockerClientTestSuite) TestCreateProject() {
 		containerName,
 	).Return(container.CreateResponse{ID: "123"}, nil)
 
-	err := s.dockerClient.CreateProject(project1, "download-url", nil, nil)
+	err := s.dockerClient.CreateProject(project1, "download-url", nil, nil, nil)
 	require.Nil(s.T(), err)
 }
