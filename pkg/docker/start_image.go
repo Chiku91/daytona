@@ -6,16 +6,14 @@ package docker
 import (
 	"context"
 	"fmt"
-	"io"
 	"strings"
 	"time"
 
-	"github.com/daytonaio/daytona/pkg/workspace"
 	"github.com/docker/docker/api/types/container"
 )
 
-func (d *DockerClient) startImageProject(project *workspace.Project, daytonaDownloadUrl string, logWriter io.Writer) error {
-	containerName := d.GetProjectContainerName(project)
+func (d *DockerClient) startImageProject(opts *CreateProjectOptions) error {
+	containerName := d.GetProjectContainerName(opts.Project)
 	ctx := context.Background()
 
 	c, err := d.apiClient.ContainerInspect(ctx, containerName)
@@ -33,8 +31,8 @@ func (d *DockerClient) startImageProject(project *workspace.Project, daytonaDown
 		return nil
 	}
 
-	if logWriter != nil {
-		logWriter.Write([]byte("Stopping compose containers\n"))
+	if opts.LogWriter != nil {
+		opts.LogWriter.Write([]byte("Stopping compose containers\n"))
 	}
 
 	for _, c := range composeContainers {
@@ -42,13 +40,13 @@ func (d *DockerClient) startImageProject(project *workspace.Project, daytonaDown
 		if err != nil {
 			return err
 		}
-		if logWriter != nil {
-			logWriter.Write([]byte(fmt.Sprintf("Started %s\n", strings.TrimPrefix(c.Names[0], "/"))))
+		if opts.LogWriter != nil {
+			opts.LogWriter.Write([]byte(fmt.Sprintf("Started %s\n", strings.TrimPrefix(c.Names[0], "/"))))
 		}
 	}
 
 	if err == nil && c.State.Running {
-		return d.startDaytonaAgent(project, daytonaDownloadUrl, logWriter)
+		return nil
 	}
 
 	err = d.apiClient.ContainerStart(ctx, containerName, container.StartOptions{})

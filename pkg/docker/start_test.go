@@ -4,6 +4,7 @@
 package docker_test
 
 import (
+	"github.com/daytonaio/daytona/pkg/docker"
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
 	"github.com/stretchr/testify/mock"
@@ -29,6 +30,8 @@ func (s *DockerClientTestSuite) TestStartProject() {
 		},
 	}, nil)
 
-	err := s.dockerClient.StartProject(project1, "", "", nil)
+	err := s.dockerClient.StartProject(&docker.CreateProjectOptions{
+		Project: project1,
+	}, "")
 	require.Nil(s.T(), err)
 }

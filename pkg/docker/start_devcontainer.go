@@ -3,14 +3,8 @@
 
 package docker
 
-import (
-	"io"
-
-	"github.com/daytonaio/daytona/pkg/workspace"
-)
-
-func (d *DockerClient) startDevcontainerProject(project *workspace.Project, projectDir string, logWriter io.Writer) error {
-	err := d.createProjectFromDevcontainer(project, projectDir, logWriter, false)
+func (d *DockerClient) startDevcontainerProject(opts *CreateProjectOptions) error {
+	err := d.createProjectFromDevcontainer(opts, false)
 	if err != nil {
 		return err
 	}

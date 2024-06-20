@@ -6,21 +6,19 @@ package docker
 import (
 	"context"
 	"fmt"
-	"io"
 
-	"github.com/daytonaio/daytona/pkg/containerregistry"
 	"github.com/daytonaio/daytona/pkg/workspace"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/mount"
 )
 
-func (d *DockerClient) createProjectFromImage(project *workspace.Project, projectDir string, cr *containerregistry.ContainerRegistry, logWriter io.Writer) error {
-	err := d.PullImage(project.Image, cr, logWriter)
+func (d *DockerClient) createProjectFromImage(opts *CreateProjectOptions) error {
+	err := d.PullImage(opts.Project.Image, opts.Cr, opts.LogWriter)
 	if err != nil {
 		return err
 	}
 
-	return d.initProjectContainer(project, projectDir)
+	return d.initProjectContainer(opts.Project, opts.ProjectDir)
 }
 
 func (d *DockerClient) initProjectContainer(project *workspace.Project, projectDir string) error {

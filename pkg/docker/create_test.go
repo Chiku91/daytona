@@ -66,6 +66,13 @@ func (s *DockerClientTestSuite) TestCreateProject() {
 		containerName,
 	).Return(container.CreateResponse{ID: "123"}, nil)
 
-	err := s.dockerClient.CreateProject(project1, "download-url", nil, nil, nil)
+	err := s.dockerClient.CreateProject(&docker.CreateProjectOptions{
+		Project:          project1,
+		ProjectDir:       "/tmp",
+		Cr:               nil,
+		LogWriter:        nil,
+		Gpc:              nil,
+		SshSessionConfig: nil,
+	})
 	require.Nil(s.T(), err)
 }

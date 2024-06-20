@@ -14,25 +14,25 @@ import (
 	"github.com/docker/docker/api/types"
 )
 
-func (d *DockerClient) StartProject(project *workspace.Project, projectDir, daytonaDownloadUrl string, logWriter io.Writer) error {
+func (d *DockerClient) StartProject(opts *CreateProjectOptions, daytonaDownloadUrl string) error {
 	var err error
-	if project.Build != nil && project.Build.Devcontainer != nil {
-		err = d.startDevcontainerProject(project, projectDir, logWriter)
-	} else if devcontainerFilePath, pathError := devcontainer.FindDevcontainerConfigFilePath(projectDir); pathError == nil {
-		project.Build.Devcontainer = &workspace.ProjectBuildDevcontainer{
+	if opts.Project.Build != nil && opts.Project.Build.Devcontainer != nil {
+		err = d.startDevcontainerProject(opts)
+	} else if devcontainerFilePath, pathError := devcontainer.FindDevcontainerConfigFilePath(opts.ProjectDir); pathError == nil {
+		opts.Project.Build.Devcontainer = &workspace.ProjectBuildDevcontainer{
 			DevContainerFilePath: devcontainerFilePath,
 		}
 
-		err = d.startDevcontainerProject(project, projectDir, logWriter)
+		err = d.startDevcontainerProject(opts)
 	} else {
-		err = d.startImageProject(project, daytonaDownloadUrl, logWriter)
+		err = d.startImageProject(opts)
 	}
 
 	if err != nil {
 		return err
 	}
 
-	return d.startDaytonaAgent(project, daytonaDownloadUrl, logWriter)
+	return d.startDaytonaAgent(opts.Project, daytonaDownloadUrl, opts.LogWriter)
 }
 
 func (d *DockerClient) startDaytonaAgent(project *workspace.Project, daytonaDownloadUrl string, logWriter io.Writer) error {

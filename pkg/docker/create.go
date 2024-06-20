@@ -7,14 +7,14 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"os"
+	"os/user"
 	"path/filepath"
 	"time"
 
 	"github.com/daytonaio/daytona/pkg/builder/devcontainer"
-	"github.com/daytonaio/daytona/pkg/containerregistry"
-	"github.com/daytonaio/daytona/pkg/gitprovider"
+	"github.com/daytonaio/daytona/pkg/ssh"
 	"github.com/daytonaio/daytona/pkg/workspace"
+	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/mount"
 	log "github.com/sirupsen/logrus"
@@ -24,63 +24,59 @@ func (d *DockerClient) CreateWorkspace(workspace *workspace.Workspace, logWriter
 	return nil
 }
 
-func (d *DockerClient) CreateProject(project *workspace.Project, projectDir string, cr *containerregistry.ContainerRegistry, logWriter io.Writer, gpc *gitprovider.GitProviderConfig) error {
-	err := d.cloneProjectRepository(project, projectDir, gpc, logWriter)
+func (d *DockerClient) CreateProject(opts *CreateProjectOptions) error {
+	err := d.cloneProjectRepository(opts)
 	if err != nil {
 		return err
 	}
 
-	if project.Build != nil && project.Build.Devcontainer != nil {
-		err = d.createProjectFromDevcontainer(project, projectDir, logWriter, true)
-	} else if devcontainerFilePath, pathError := devcontainer.FindDevcontainerConfigFilePath(projectDir); pathError == nil {
-		project.Build.Devcontainer = &workspace.ProjectBuildDevcontainer{
+	if opts.Project.Build != nil && opts.Project.Build.Devcontainer != nil {
+		err = d.createProjectFromDevcontainer(opts, true)
+	} else if devcontainerFilePath, pathError := devcontainer.FindDevcontainerConfigFilePath(opts.ProjectDir); pathError == nil {
+		opts.Project.Build.Devcontainer = &workspace.ProjectBuildDevcontainer{
 			DevContainerFilePath: devcontainerFilePath,
 		}
 
-		err = d.createProjectFromDevcontainer(project, projectDir, logWriter, true)
+		err = d.createProjectFromDevcontainer(opts, true)
 	} else {
-		err = d.createProjectFromImage(project, projectDir, cr, logWriter)
+		err = d.createProjectFromImage(opts)
 	}
 
 	return err
 }
 
-func (d *DockerClient) cloneProjectRepository(project *workspace.Project, projectDir string, gcp *gitprovider.GitProviderConfig, logWriter io.Writer) error {
+func (d *DockerClient) cloneProjectRepository(opts *CreateProjectOptions) error {
 	// TODO: The image should be configurable
-	err := d.PullImage("alpine/git", nil, logWriter)
+	err := d.PullImage("alpine/git", nil, opts.LogWriter)
 	if err != nil {
 		return err
 	}
 
 	ctx := context.Background()
 
-	cloneUrl := project.Repository.Url
-	if gcp != nil {
-		cloneUrl = fmt.Sprintf("https://%s:%s@%s", gcp.Username, gcp.Token, project.Repository.Url)
+	cloneUrl := opts.Project.Repository.Url
+	if opts.Gpc != nil {
+		cloneUrl = fmt.Sprintf("https://%s:%s@%s", opts.Gpc.Username, opts.Gpc.Token, opts.Project.Repository.Url)
 	}
 
-	err = os.MkdirAll(filepath.Dir(projectDir), os.ModePerm)
-	if err != nil {
-		return err
-	}
+	cloneCmd := []string{"git", "clone", cloneUrl, fmt.Sprintf("/workdir/%s-%s", opts.Project.WorkspaceId, opts.Project.Name)}
 
 	c, err := d.apiClient.ContainerCreate(ctx, &container.Config{
-		Image: "alpine/git",
-		Cmd:   []string{"clone", cloneUrl, fmt.Sprintf("/workdir/%s-%s", project.WorkspaceId, project.Name)},
+		Image:      "daytonaio/workspace-project",
+		Entrypoint: []string{"sleep"},
+		Cmd:        []string{"infinity"},
 	}, &container.HostConfig{
 		Mounts: []mount.Mount{
 			{
 				Type:   mount.TypeBind,
-				Source: filepath.Dir(projectDir),
+				Source: filepath.Dir(opts.ProjectDir),
 				Target: "/workdir",
 			},
 		},
-	}, nil, nil, d.GetProjectContainerName(project))
+	}, nil, nil, fmt.Sprintf("git-clone-%s-%s", opts.Project.WorkspaceId, opts.Project.Name))
 	if err != nil {
 		return err
 	}
-
-	waitResponse, errChan := d.apiClient.ContainerWait(ctx, c.ID, container.WaitConditionNextExit)
 
 	err = d.apiClient.ContainerStart(ctx, c.ID, container.StartOptions{})
 	if err != nil {
@@ -89,7 +85,7 @@ func (d *DockerClient) cloneProjectRepository(project *workspace.Project, projec
 
 	go func() {
 		for {
-			err = d.GetContainerLogs(c.ID, logWriter)
+			err = d.GetContainerLogs(c.ID, opts.LogWriter)
 			if err == nil {
 				break
 			}
@@ -98,21 +94,77 @@ func (d *DockerClient) cloneProjectRepository(project *workspace.Project, projec
 		}
 	}()
 
-	select {
-	case err := <-errChan:
+	currentUser, err := user.Current()
+	if err != nil {
+		return err
+	}
+
+	containerUser := "daytona"
+	newUid := currentUser.Uid
+	newGid := currentUser.Gid
+
+	if opts.SshSessionConfig != nil {
+		newUid, newGid, err = ssh.GetUserUidGid(opts.SshSessionConfig)
 		if err != nil {
 			return err
 		}
-	case resp := <-waitResponse:
-		if resp.StatusCode != 0 {
-			return fmt.Errorf("container exited with status %d", resp.StatusCode)
-		}
-		if resp.Error != nil {
-			return fmt.Errorf("container exited with error: %s", resp.Error.Message)
-		}
-
-		return nil
 	}
 
-	return nil
+	if newUid == "0" && newGid == "0" {
+		containerUser = "root"
+	}
+
+	/*
+		Patch UID and GID of the user cloning the repository
+	*/
+	if containerUser != "root" {
+		_, err = d.ExecSync(c.ID, types.ExecConfig{
+			User: "root",
+			Cmd: []string{"sh", "-c", `eval $(sed -n "s/${REMOTE_USER}:[^:]*:\([^:]*\):\([^:]*\):[^:]*:\([^:]*\).*/OLD_UID=\1;OLD_GID=\2;HOME_FOLDER=\3/p" /etc/passwd); \
+		eval $(sed -n "s/\([^:]*\):[^:]*:${NEW_UID}:.*/EXISTING_USER=\1/p" /etc/passwd); \
+		eval $(sed -n "s/\([^:]*\):[^:]*:${NEW_GID}:.*/EXISTING_GROUP=\1/p" /etc/group); \
+		if [ -z "$OLD_UID" ]; then \
+			echo "Remote user not found in /etc/passwd ($REMOTE_USER)."; \
+		elif [ "$OLD_UID" = "$NEW_UID" -a "$OLD_GID" = "$NEW_GID" ]; then \
+			echo "UIDs and GIDs are the same ($NEW_UID:$NEW_GID)."; \
+		elif [ "$OLD_UID" != "$NEW_UID" -a -n "$EXISTING_USER" ]; then \
+			echo "User with UID exists ($EXISTING_USER=$NEW_UID)."; \
+		else \
+			if [ "$OLD_GID" != "$NEW_GID" -a -n "$EXISTING_GROUP" ]; then \
+				echo "Group with GID exists ($EXISTING_GROUP=$NEW_GID)."; \
+				NEW_GID="$OLD_GID"; \
+			fi; \
+			echo "Updating UID:GID from $OLD_UID:$OLD_GID to $NEW_UID:$NEW_GID."; \
+			sed -i -e "s/\(${REMOTE_USER}:[^:]*:\)[^:]*:[^:]*/\1${NEW_UID}:${NEW_GID}/" /etc/passwd; \
+			if [ "$OLD_GID" != "$NEW_GID" ]; then \
+				sed -i -e "s/\([^:]*:[^:]*:\)${OLD_GID}:/\1${NEW_GID}:/" /etc/group; \
+			fi; \
+			chown -R $NEW_UID:$NEW_GID $HOME_FOLDER; \
+		fi;`},
+			Env: []string{
+				fmt.Sprintf("REMOTE_USER=%s", containerUser),
+				fmt.Sprintf("NEW_UID=%s", newUid),
+				fmt.Sprintf("NEW_GID=%s", newGid),
+			},
+		}, opts.LogWriter)
+		if err != nil {
+			return err
+		}
+	}
+
+	res, err := d.ExecSync(c.ID, types.ExecConfig{
+		User: containerUser,
+		Cmd:  cloneCmd,
+	}, opts.LogWriter)
+	if err != nil {
+		return err
+	}
+	if res.ExitCode != 0 {
+		return fmt.Errorf("git clone failed with exit code %d", res.ExitCode)
+	}
+
+	return d.apiClient.ContainerRemove(ctx, c.ID, container.RemoveOptions{
+		Force:         true,
+		RemoveVolumes: true,
+	})
 }

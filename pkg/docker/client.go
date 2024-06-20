@@ -10,6 +10,7 @@ import (
 
 	"github.com/daytonaio/daytona/pkg/containerregistry"
 	"github.com/daytonaio/daytona/pkg/gitprovider"
+	"github.com/daytonaio/daytona/pkg/ssh"
 	"github.com/daytonaio/daytona/pkg/workspace"
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
@@ -17,14 +18,23 @@ import (
 	"github.com/docker/docker/client"
 )
 
+type CreateProjectOptions struct {
+	Project          *workspace.Project
+	ProjectDir       string
+	Cr               *containerregistry.ContainerRegistry
+	LogWriter        io.Writer
+	Gpc              *gitprovider.GitProviderConfig
+	SshSessionConfig *ssh.SessionConfig
+}
+
 type IDockerClient interface {
-	CreateProject(project *workspace.Project, projectDir string, cr *containerregistry.ContainerRegistry, logWriter io.Writer, gpc *gitprovider.GitProviderConfig) error
+	CreateProject(opts *CreateProjectOptions) error
 	CreateWorkspace(workspace *workspace.Workspace, logWriter io.Writer) error
 
 	DestroyProject(project *workspace.Project) error
 	DestroyWorkspace(workspace *workspace.Workspace) error
 
-	StartProject(project *workspace.Project, projectDir, daytonaDownloadUrl string, logWriter io.Writer) error
+	StartProject(opts *CreateProjectOptions, daytonaDownloadUrl string) error
 	StopProject(project *workspace.Project, logWriter io.Writer) error
 
 	GetProjectInfo(project *workspace.Project) (*workspace.ProjectInfo, error)
