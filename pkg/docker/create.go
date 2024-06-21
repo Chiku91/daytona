@@ -31,13 +31,13 @@ func (d *DockerClient) CreateProject(opts *CreateProjectOptions) error {
 	}
 
 	if opts.Project.Build != nil && opts.Project.Build.Devcontainer != nil {
-		err = d.createProjectFromDevcontainer(opts, true)
+		_, err = d.createProjectFromDevcontainer(opts, true)
 	} else if devcontainerFilePath, pathError := devcontainer.FindDevcontainerConfigFilePath(opts.ProjectDir); pathError == nil {
 		opts.Project.Build.Devcontainer = &workspace.ProjectBuildDevcontainer{
 			DevContainerFilePath: devcontainerFilePath,
 		}
 
-		err = d.createProjectFromDevcontainer(opts, true)
+		_, err = d.createProjectFromDevcontainer(opts, true)
 	} else {
 		err = d.createProjectFromImage(opts)
 	}
@@ -77,6 +77,8 @@ func (d *DockerClient) cloneProjectRepository(opts *CreateProjectOptions) error 
 	if err != nil {
 		return err
 	}
+
+	defer d.removeContainer(c.ID)
 
 	err = d.apiClient.ContainerStart(ctx, c.ID, container.StartOptions{})
 	if err != nil {
@@ -163,8 +165,5 @@ func (d *DockerClient) cloneProjectRepository(opts *CreateProjectOptions) error 
 		return fmt.Errorf("git clone failed with exit code %d", res.ExitCode)
 	}
 
-	return d.apiClient.ContainerRemove(ctx, c.ID, container.RemoveOptions{
-		Force:         true,
-		RemoveVolumes: true,
-	})
+	return nil
 }

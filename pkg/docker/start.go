@@ -16,14 +16,19 @@ import (
 
 func (d *DockerClient) StartProject(opts *CreateProjectOptions, daytonaDownloadUrl string) error {
 	var err error
+	var remoteUser RemoteUser
+	containerUser := opts.Project.User
+
 	if opts.Project.Build != nil && opts.Project.Build.Devcontainer != nil {
-		err = d.startDevcontainerProject(opts)
+		remoteUser, err = d.startDevcontainerProject(opts)
+		containerUser = string(remoteUser)
 	} else if devcontainerFilePath, pathError := devcontainer.FindDevcontainerConfigFilePath(opts.ProjectDir); pathError == nil {
 		opts.Project.Build.Devcontainer = &workspace.ProjectBuildDevcontainer{
 			DevContainerFilePath: devcontainerFilePath,
 		}
 
-		err = d.startDevcontainerProject(opts)
+		remoteUser, err = d.startDevcontainerProject(opts)
+		containerUser = string(remoteUser)
 	} else {
 		err = d.startImageProject(opts)
 	}
@@ -32,10 +37,10 @@ func (d *DockerClient) StartProject(opts *CreateProjectOptions, daytonaDownloadU
 		return err
 	}
 
-	return d.startDaytonaAgent(opts.Project, daytonaDownloadUrl, opts.LogWriter)
+	return d.startDaytonaAgent(opts.Project, containerUser, daytonaDownloadUrl, opts.LogWriter)
 }
 
-func (d *DockerClient) startDaytonaAgent(project *workspace.Project, daytonaDownloadUrl string, logWriter io.Writer) error {
+func (d *DockerClient) startDaytonaAgent(project *workspace.Project, containerUser, daytonaDownloadUrl string, logWriter io.Writer) error {
 	errChan := make(chan error)
 
 	go func() {
@@ -43,6 +48,7 @@ func (d *DockerClient) startDaytonaAgent(project *workspace.Project, daytonaDown
 			Cmd:          []string{"bash", "-c", util.GetProjectStartScript(daytonaDownloadUrl, project.ApiKey)},
 			AttachStdout: true,
 			AttachStderr: true,
+			User:         containerUser,
 		}, logWriter)
 		if err != nil {
 			errChan <- err

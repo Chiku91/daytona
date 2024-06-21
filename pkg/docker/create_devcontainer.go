@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -27,31 +28,35 @@ import (
 
 const dockerSockForwardContainer = "daytona-sock-forward"
 
-func (d *DockerClient) createProjectFromDevcontainer(opts *CreateProjectOptions, prebuild bool) error {
+type RemoteUser string
+
+func (d *DockerClient) createProjectFromDevcontainer(opts *CreateProjectOptions, prebuild bool) (RemoteUser, error) {
 	socketForwardId, err := d.ensureDockerSockForward(opts.LogWriter)
 	if err != nil {
-		return err
+		return "", err
 	}
 
 	ctx := context.Background()
 
-	configFilePath := filepath.Join(opts.ProjectDir, opts.Project.Build.Devcontainer.DevContainerFilePath)
+	mountTarget := path.Join("/workdir", filepath.Base(opts.ProjectDir))
 
-	config, err := d.readDevcontainerConfig(opts, socketForwardId, configFilePath)
+	configFilePath := filepath.Join(opts.ProjectDir, opts.Project.Build.Devcontainer.DevContainerFilePath)
+	targetConfigFilePath := path.Join(mountTarget, opts.Project.Build.Devcontainer.DevContainerFilePath)
+
+	config, err := d.readDevcontainerConfig(opts, socketForwardId, targetConfigFilePath)
 	if err != nil {
-		return err
+		return "", err
 	}
 
-	workspaceFolder := ""
+	workspaceFolder := d.getDevcontainerConfigProp(config, "workspaceFolder")
+	if workspaceFolder == "" {
+		return "", fmt.Errorf("unable to determine workspace folder from devcontainer configuration")
+	}
 
-	pattern := `"workspaceFolder":"([^"]+)"`
-	re := regexp.MustCompile(pattern)
-	match := re.FindStringSubmatch(config)
+	remoteUser := d.getDevcontainerConfigProp(config, "remoteUser")
 
-	if len(match) > 1 {
-		workspaceFolder = match[1]
-	} else {
-		return fmt.Errorf("unable to determine workspace folder from devcontainer configuration")
+	if remoteUser == "" {
+		return "", fmt.Errorf("unable to determine remote user from devcontainer configuration")
 	}
 
 	var devcontainerConfigContent = []byte{}
@@ -61,19 +66,19 @@ func (d *DockerClient) createProjectFromDevcontainer(opts *CreateProjectOptions,
 		devcontainerConfigContent, err = os.ReadFile(configFilePath)
 	}
 	if err != nil {
-		return err
+		return "", err
 	}
 
 	var devcontainerConfig map[string]interface{}
 
 	standardized, err := hujson.Standardize(devcontainerConfigContent)
 	if err != nil {
-		return err
+		return "", err
 	}
 
 	err = json.Unmarshal(standardized, &devcontainerConfig)
 	if err != nil {
-		return err
+		return "", err
 	}
 
 	envVars := map[string]string{}
@@ -90,20 +95,27 @@ func (d *DockerClient) createProjectFromDevcontainer(opts *CreateProjectOptions,
 		envVars[k] = v
 	}
 
+	// If the workspaceFolder is not set in the devcontainer.json, we set it to /workspaces/<project-name>
+	if _, ok := devcontainerConfig["workspaceFolder"].(string); !ok {
+		workspaceFolder = fmt.Sprintf("/workspaces/%s", opts.Project.Name)
+		devcontainerConfig["workspaceFolder"] = workspaceFolder
+	}
+	devcontainerConfig["workspaceMount"] = fmt.Sprintf("source=%s,target=%s,type=bind", opts.ProjectDir, workspaceFolder)
+
 	envVars["DAYTONA_PROJECT_DIR"] = workspaceFolder
 
 	devcontainerConfig["containerEnv"] = envVars
 
 	configString, err := json.MarshalIndent(devcontainerConfig, "", "  ")
 	if err != nil {
-		return err
+		return "", err
 	}
 
 	devcontainerCmd := []string{
 		"devcontainer",
 		"up",
-		"--workspace-folder=" + opts.ProjectDir,
-		"--config=" + configFilePath,
+		"--workspace-folder=" + mountTarget,
+		"--config=" + targetConfigFilePath,
 		"--override-config=/tmp/daytona-devcontainer.json",
 		"--id-label=daytona.workspace.id=" + opts.Project.WorkspaceId,
 		"--id-label=daytona.project.name=" + opts.Project.Name,
@@ -130,19 +142,21 @@ func (d *DockerClient) createProjectFromDevcontainer(opts *CreateProjectOptions,
 			{
 				Type:   mount.TypeBind,
 				Source: opts.ProjectDir,
-				Target: opts.ProjectDir,
+				Target: mountTarget,
 			},
 		},
 	}, nil, nil, uuid.NewString())
 	if err != nil {
-		return err
+		return "", err
 	}
+
+	// defer d.removeContainer(c.ID)
 
 	waitResponse, errChan := d.apiClient.ContainerWait(ctx, c.ID, container.WaitConditionNextExit)
 
 	err = d.apiClient.ContainerStart(ctx, c.ID, container.StartOptions{})
 	if err != nil {
-		return err
+		return "", err
 	}
 
 	go func() {
@@ -159,20 +173,20 @@ func (d *DockerClient) createProjectFromDevcontainer(opts *CreateProjectOptions,
 	select {
 	case err := <-errChan:
 		if err != nil {
-			return err
+			return "", err
 		}
 	case resp := <-waitResponse:
 		if resp.StatusCode != 0 {
-			return fmt.Errorf("container exited with status %d", resp.StatusCode)
+			return "", fmt.Errorf("container exited with status %d", resp.StatusCode)
 		}
 		if resp.Error != nil {
-			return fmt.Errorf("container exited with error: %s", resp.Error.Message)
+			return "", fmt.Errorf("container exited with error: %s", resp.Error.Message)
 		}
 
-		return nil
+		return RemoteUser(remoteUser), nil
 	}
 
-	return nil
+	return RemoteUser(remoteUser), nil
 }
 
 func (d *DockerClient) ensureDockerSockForward(logWriter io.Writer) (string, error) {
@@ -223,10 +237,12 @@ func (d *DockerClient) ensureDockerSockForward(logWriter io.Writer) (string, err
 func (d *DockerClient) readDevcontainerConfig(opts *CreateProjectOptions, socketForwardId, configFilePath string) (string, error) {
 	ctx := context.Background()
 
+	mountTarget := path.Join("/workdir", filepath.Base(opts.ProjectDir))
+
 	devcontainerCmd := []string{
 		"devcontainer",
 		"read-configuration",
-		"--workspace-folder=" + opts.ProjectDir,
+		"--workspace-folder=" + mountTarget,
 		"--config=" + configFilePath,
 	}
 
@@ -237,8 +253,6 @@ func (d *DockerClient) readDevcontainerConfig(opts *CreateProjectOptions, socket
 		Entrypoint: []string{"sh"},
 		Env:        []string{"DOCKER_HOST=tcp://localhost:2375"},
 		Cmd:        cmd,
-		// AttachStdout: true,
-		// AttachStderr: true,
 	}, &container.HostConfig{
 		Privileged:  true,
 		NetworkMode: container.NetworkMode(fmt.Sprintf("container:%s", socketForwardId)),
@@ -246,7 +260,7 @@ func (d *DockerClient) readDevcontainerConfig(opts *CreateProjectOptions, socket
 			{
 				Type:   mount.TypeBind,
 				Source: opts.ProjectDir,
-				Target: opts.ProjectDir,
+				Target: mountTarget,
 			},
 		},
 	}, nil, nil, uuid.NewString())
@@ -254,14 +268,14 @@ func (d *DockerClient) readDevcontainerConfig(opts *CreateProjectOptions, socket
 		return "", err
 	}
 
+	// defer d.removeContainer(c.ID)
+
 	waitResponse, errChan := d.apiClient.ContainerWait(ctx, c.ID, container.WaitConditionNextExit)
 
 	err = d.apiClient.ContainerStart(ctx, c.ID, container.StartOptions{})
 	if err != nil {
 		return "", err
 	}
-
-	opts.LogWriter.Write([]byte("Wait for container to end...\n"))
 
 	select {
 	case err := <-errChan:
@@ -280,23 +294,35 @@ func (d *DockerClient) readDevcontainerConfig(opts *CreateProjectOptions, socket
 	config := ""
 
 	r, w := io.Pipe()
-	writer := io.MultiWriter(w, opts.LogWriter)
 
-	opts.LogWriter.Write([]byte("Reading devcontainer configuration...\n"))
+	go func() {
+		scanner := bufio.NewScanner(r)
+		for scanner.Scan() {
+			config += scanner.Text()
+		}
+	}()
 
-	err = d.GetContainerLogsNoFollow(c.ID, writer)
+	err = d.GetContainerLogs(c.ID, w)
 	if err != nil {
 		return "", err
 	}
 
-	opts.LogWriter.Write([]byte("Done reading devcontainer configuration...\n"))
-
-	scanner := bufio.NewScanner(r)
-	for scanner.Scan() {
-		config += scanner.Text()
+	configStartIndex := strings.Index(config, "{")
+	if configStartIndex == -1 {
+		return "", fmt.Errorf("unable to find start of JSON in devcontainer configuration")
 	}
 
-	opts.LogWriter.Write([]byte(config))
+	return config[configStartIndex:], nil
+}
 
-	return config[strings.Index(config, "{"):], nil
+func (d *DockerClient) getDevcontainerConfigProp(devcontainerConfig, prop string) string {
+	pattern := fmt.Sprintf(`"%s":"([^"]+)"`, prop)
+	re := regexp.MustCompile(pattern)
+	match := re.FindStringSubmatch(devcontainerConfig)
+
+	if len(match) > 1 {
+		return match[1]
+	}
+
+	return ""
 }

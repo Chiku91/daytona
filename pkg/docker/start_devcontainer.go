@@ -3,11 +3,6 @@
 
 package docker
 
-func (d *DockerClient) startDevcontainerProject(opts *CreateProjectOptions) error {
-	err := d.createProjectFromDevcontainer(opts, false)
-	if err != nil {
-		return err
-	}
-
-	return nil
+func (d *DockerClient) startDevcontainerProject(opts *CreateProjectOptions) (RemoteUser, error) {
+	return d.createProjectFromDevcontainer(opts, false)
 }
