@@ -10,7 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/daytonaio/daytona/pkg/builder/devcontainer"
+	"github.com/daytonaio/daytona/pkg/builder/detect"
 	"github.com/daytonaio/daytona/pkg/git"
 	"github.com/daytonaio/daytona/pkg/gitprovider"
 	"github.com/daytonaio/daytona/pkg/logs"
@@ -100,17 +100,19 @@ func (f *BuilderFactory) Create(p workspace.Project, gpc *gitprovider.GitProvide
 	}
 
 	// Autodetect
-
-	devcontainerConfigFilePath, err := devcontainer.FindDevcontainerConfigFilePath(projectDir)
-	if err == nil {
-		p.Build.Devcontainer = &workspace.ProjectBuildDevcontainer{
-			DevContainerFilePath: devcontainerConfigFilePath,
-		}
-
-		return f.newDevcontainerBuilder(buildId, p, gpc, hash, projectDir)
+	builderType, err := detect.DetectProjectBuilderType(&p, projectDir, nil)
+	if err != nil {
+		return nil, err
 	}
 
-	return nil, nil
+	switch builderType {
+	case detect.BuilderTypeDevcontainer:
+		return f.newDevcontainerBuilder(buildId, p, gpc, hash, projectDir)
+	case detect.BuilderTypeImage:
+		return nil, nil
+	default:
+		return nil, fmt.Errorf("unknown builder type: %s", builderType)
+	}
 }
 
 func (f *BuilderFactory) CheckExistingBuild(p workspace.Project) (*BuildResult, error) {

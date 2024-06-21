@@ -5,8 +5,6 @@ package devcontainer
 
 import (
 	"fmt"
-	"os"
-	"path/filepath"
 )
 
 func ConvertCommands(mergedCommands []interface{}) ([]string, error) {
@@ -38,33 +36,4 @@ func ConvertCommands(mergedCommands []interface{}) ([]string, error) {
 	}
 
 	return commandArray, nil
-}
-
-func FindDevcontainerConfigFilePath(projectDir string) (string, error) {
-	devcontainerPath := ".devcontainer/devcontainer.json"
-	isDevcontainer, err := fileExists(filepath.Join(projectDir, devcontainerPath))
-	if err != nil {
-		devcontainerPath = ".devcontainer.json"
-		isDevcontainer, err = fileExists(filepath.Join(projectDir, devcontainerPath))
-		if err != nil {
-			return devcontainerPath, nil
-		}
-	}
-
-	if isDevcontainer {
-		return devcontainerPath, nil
-	}
-
-	return "", os.ErrNotExist
-}
-
-func fileExists(filePath string) (bool, error) {
-	_, err := os.Stat(filePath)
-	if os.IsNotExist(err) {
-		return false, nil
-	} else if err != nil {
-		// There was an error checking for the file
-		return false, err
-	}
-	return true, nil
 }

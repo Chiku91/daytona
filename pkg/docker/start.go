@@ -5,10 +5,11 @@ package docker
 
 import (
 	"errors"
+	"fmt"
 	"io"
 	"time"
 
-	"github.com/daytonaio/daytona/pkg/builder/devcontainer"
+	"github.com/daytonaio/daytona/pkg/builder/detect"
 	"github.com/daytonaio/daytona/pkg/provider/util"
 	"github.com/daytonaio/daytona/pkg/workspace"
 	"github.com/docker/docker/api/types"
@@ -19,18 +20,19 @@ func (d *DockerClient) StartProject(opts *CreateProjectOptions, daytonaDownloadU
 	var remoteUser RemoteUser
 	containerUser := opts.Project.User
 
-	if opts.Project.Build != nil && opts.Project.Build.Devcontainer != nil {
-		remoteUser, err = d.startDevcontainerProject(opts)
-		containerUser = string(remoteUser)
-	} else if devcontainerFilePath, pathError := devcontainer.FindDevcontainerConfigFilePath(opts.ProjectDir); pathError == nil {
-		opts.Project.Build.Devcontainer = &workspace.ProjectBuildDevcontainer{
-			DevContainerFilePath: devcontainerFilePath,
-		}
+	builderType, err := detect.DetectProjectBuilderType(opts.Project, opts.ProjectDir, opts.SshSessionConfig)
+	if err != nil {
+		return err
+	}
 
+	switch builderType {
+	case detect.BuilderTypeDevcontainer:
 		remoteUser, err = d.startDevcontainerProject(opts)
 		containerUser = string(remoteUser)
-	} else {
+	case detect.BuilderTypeImage:
 		err = d.startImageProject(opts)
+	default:
+		return fmt.Errorf("unknown builder type: %s", builderType)
 	}
 
 	if err != nil {

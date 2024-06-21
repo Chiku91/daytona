@@ -11,7 +11,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/daytonaio/daytona/pkg/builder/devcontainer"
+	"github.com/daytonaio/daytona/pkg/builder/detect"
 	"github.com/daytonaio/daytona/pkg/ssh"
 	"github.com/daytonaio/daytona/pkg/workspace"
 	"github.com/docker/docker/api/types"
@@ -30,19 +30,20 @@ func (d *DockerClient) CreateProject(opts *CreateProjectOptions) error {
 		return err
 	}
 
-	if opts.Project.Build != nil && opts.Project.Build.Devcontainer != nil {
-		_, err = d.createProjectFromDevcontainer(opts, true)
-	} else if devcontainerFilePath, pathError := devcontainer.FindDevcontainerConfigFilePath(opts.ProjectDir); pathError == nil {
-		opts.Project.Build.Devcontainer = &workspace.ProjectBuildDevcontainer{
-			DevContainerFilePath: devcontainerFilePath,
-		}
-
-		_, err = d.createProjectFromDevcontainer(opts, true)
-	} else {
-		err = d.createProjectFromImage(opts)
+	builderType, err := detect.DetectProjectBuilderType(opts.Project, opts.ProjectDir, opts.SshSessionConfig)
+	if err != nil {
+		return err
 	}
 
-	return err
+	switch builderType {
+	case detect.BuilderTypeDevcontainer:
+		_, err := d.createProjectFromDevcontainer(opts, true)
+		return err
+	case detect.BuilderTypeImage:
+		return d.createProjectFromImage(opts)
+	default:
+		return fmt.Errorf("unknown builder type: %s", builderType)
+	}
 }
 
 func (d *DockerClient) cloneProjectRepository(opts *CreateProjectOptions) error {

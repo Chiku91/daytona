@@ -27,21 +27,19 @@ func (d *DockerClient) startImageProject(opts *CreateProjectOptions) error {
 		return err
 	}
 
-	if composeContainers == nil {
-		return nil
-	}
-
-	if opts.LogWriter != nil {
-		opts.LogWriter.Write([]byte("Stopping compose containers\n"))
-	}
-
-	for _, c := range composeContainers {
-		err = d.apiClient.ContainerStart(ctx, c.ID, container.StartOptions{})
-		if err != nil {
-			return err
-		}
+	if composeContainers != nil {
 		if opts.LogWriter != nil {
-			opts.LogWriter.Write([]byte(fmt.Sprintf("Started %s\n", strings.TrimPrefix(c.Names[0], "/"))))
+			opts.LogWriter.Write([]byte("Starting compose containers\n"))
+		}
+
+		for _, c := range composeContainers {
+			err = d.apiClient.ContainerStart(ctx, c.ID, container.StartOptions{})
+			if err != nil {
+				return err
+			}
+			if opts.LogWriter != nil {
+				opts.LogWriter.Write([]byte(fmt.Sprintf("Started %s\n", strings.TrimPrefix(c.Names[0], "/"))))
+			}
 		}
 	}
 

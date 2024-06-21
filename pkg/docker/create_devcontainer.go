@@ -39,8 +39,6 @@ func (d *DockerClient) createProjectFromDevcontainer(opts *CreateProjectOptions,
 	ctx := context.Background()
 
 	mountTarget := path.Join("/workdir", filepath.Base(opts.ProjectDir))
-
-	configFilePath := filepath.Join(opts.ProjectDir, opts.Project.Build.Devcontainer.DevContainerFilePath)
 	targetConfigFilePath := path.Join(mountTarget, opts.Project.Build.Devcontainer.DevContainerFilePath)
 
 	config, err := d.readDevcontainerConfig(opts, socketForwardId, targetConfigFilePath)
@@ -61,8 +59,10 @@ func (d *DockerClient) createProjectFromDevcontainer(opts *CreateProjectOptions,
 
 	var devcontainerConfigContent = []byte{}
 	if opts.SshSessionConfig != nil {
+		configFilePath := path.Join(opts.ProjectDir, opts.Project.Build.Devcontainer.DevContainerFilePath)
 		devcontainerConfigContent, err = ssh.ReadFile(opts.SshSessionConfig, configFilePath)
 	} else {
+		configFilePath := filepath.Join(opts.ProjectDir, opts.Project.Build.Devcontainer.DevContainerFilePath)
 		devcontainerConfigContent, err = os.ReadFile(configFilePath)
 	}
 	if err != nil {
@@ -102,6 +102,35 @@ func (d *DockerClient) createProjectFromDevcontainer(opts *CreateProjectOptions,
 	}
 	devcontainerConfig["workspaceMount"] = fmt.Sprintf("source=%s,target=%s,type=bind", opts.ProjectDir, workspaceFolder)
 
+	composeOverrideCmd := []string{}
+	if _, ok := devcontainerConfig["dockerComposeFile"]; ok {
+		composeFilePath := devcontainerConfig["dockerComposeFile"].(string)
+		var composeFileContent []byte
+		if opts.SshSessionConfig != nil {
+			composeFilePath := path.Join(opts.ProjectDir, filepath.Dir(opts.Project.Build.Devcontainer.DevContainerFilePath), composeFilePath)
+			composeFileContent, err = ssh.ReadFile(opts.SshSessionConfig, composeFilePath)
+		} else {
+			composeFilePath := filepath.Join(opts.ProjectDir, filepath.Dir(opts.Project.Build.Devcontainer.DevContainerFilePath), composeFilePath)
+			composeFileContent, err = os.ReadFile(composeFilePath)
+		}
+		if err != nil {
+			return "", err
+		}
+
+		overrideComposeContent := strings.ReplaceAll(string(composeFileContent), "- ..:", fmt.Sprintf("- %s:", opts.ProjectDir))
+		overrideComposeContent = strings.ReplaceAll(overrideComposeContent, "'", `'"'"'`)
+		overrideComposeContent = strings.ReplaceAll(overrideComposeContent, "context: .", fmt.Sprintf("context: %s", path.Join(mountTarget, filepath.Dir(opts.Project.Build.Devcontainer.DevContainerFilePath))))
+
+		composeOverrideCmd = []string{
+			"echo",
+			fmt.Sprintf(`'%s'`, overrideComposeContent),
+			">",
+			"/tmp/daytona-compose-override.yml",
+			"&&",
+		}
+		devcontainerConfig["dockerComposeFile"] = "/tmp/daytona-compose-override.yml"
+	}
+
 	envVars["DAYTONA_PROJECT_DIR"] = workspaceFolder
 
 	devcontainerConfig["containerEnv"] = envVars
@@ -111,7 +140,7 @@ func (d *DockerClient) createProjectFromDevcontainer(opts *CreateProjectOptions,
 		return "", err
 	}
 
-	devcontainerCmd := []string{
+	devcontainerCmd := append(composeOverrideCmd, []string{
 		"devcontainer",
 		"up",
 		"--workspace-folder=" + mountTarget,
@@ -119,7 +148,7 @@ func (d *DockerClient) createProjectFromDevcontainer(opts *CreateProjectOptions,
 		"--override-config=/tmp/daytona-devcontainer.json",
 		"--id-label=daytona.workspace.id=" + opts.Project.WorkspaceId,
 		"--id-label=daytona.project.name=" + opts.Project.Name,
-	}
+	}...)
 
 	if prebuild {
 		devcontainerCmd = append(devcontainerCmd, "--prebuild")
@@ -253,6 +282,7 @@ func (d *DockerClient) readDevcontainerConfig(opts *CreateProjectOptions, socket
 		Entrypoint: []string{"sh"},
 		Env:        []string{"DOCKER_HOST=tcp://localhost:2375"},
 		Cmd:        cmd,
+		Tty:        true,
 	}, &container.HostConfig{
 		Privileged:  true,
 		NetworkMode: container.NetworkMode(fmt.Sprintf("container:%s", socketForwardId)),
@@ -268,14 +298,35 @@ func (d *DockerClient) readDevcontainerConfig(opts *CreateProjectOptions, socket
 		return "", err
 	}
 
-	// defer d.removeContainer(c.ID)
+	defer d.removeContainer(c.ID)
 
 	waitResponse, errChan := d.apiClient.ContainerWait(ctx, c.ID, container.WaitConditionNextExit)
+
+	opts.LogWriter.Write([]byte("Reading devcontainer configuration...\n"))
 
 	err = d.apiClient.ContainerStart(ctx, c.ID, container.StartOptions{})
 	if err != nil {
 		return "", err
 	}
+
+	output := ""
+
+	r, w := io.Pipe()
+	writer := io.MultiWriter(w, opts.LogWriter)
+
+	go func() {
+		scanner := bufio.NewScanner(r)
+		for scanner.Scan() {
+			output += scanner.Text()
+		}
+	}()
+
+	go func() {
+		err = d.GetContainerLogs(c.ID, writer)
+		if err != nil {
+			opts.LogWriter.Write([]byte(fmt.Sprintf("Error reading devcontainer configuration: %v\n", err)))
+		}
+	}()
 
 	select {
 	case err := <-errChan:
@@ -291,28 +342,12 @@ func (d *DockerClient) readDevcontainerConfig(opts *CreateProjectOptions, socket
 		}
 	}
 
-	config := ""
-
-	r, w := io.Pipe()
-
-	go func() {
-		scanner := bufio.NewScanner(r)
-		for scanner.Scan() {
-			config += scanner.Text()
-		}
-	}()
-
-	err = d.GetContainerLogs(c.ID, w)
-	if err != nil {
-		return "", err
-	}
-
-	configStartIndex := strings.Index(config, "{")
+	configStartIndex := strings.Index(output, "{")
 	if configStartIndex == -1 {
 		return "", fmt.Errorf("unable to find start of JSON in devcontainer configuration")
 	}
 
-	return config[configStartIndex:], nil
+	return output[configStartIndex:], nil
 }
 
 func (d *DockerClient) getDevcontainerConfigProp(devcontainerConfig, prop string) string {
